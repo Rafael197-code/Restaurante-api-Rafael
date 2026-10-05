@@ -2,73 +2,164 @@ require("dotenv").config()
 const express = require("express")
 const cors = require("cors")
 const db = require("./config/database")
+const jwt = require("jsonwebtoken")
+
+const auth = require("./middleware/auth")
+
+const bcrypt = require("bcrypt")
 
 const app = express()
-
-app.use(cors()) 
 
 const PORT = 3001
 
 app.use(express.json())
 
-// Rota de teste da API
-app.get("/", (req, res) => {
-    res.json({
-        mensagem: "API funcionando"
-    })
+app.get("/",(req,res)=>{
+  res.json({
+    mensagem:"API funcionando"
+  })
 })
 
-// NOVA ROTA: Listar todos os produtos (Necessária para o seu frontend Next.js)
-app.get("/produtos", async (req, res) => {
-    try {
-        const sql = "SELECT * FROM produto";
-        const [rows] = await db.execute(sql);
+app.post("/login", async (req, res) => {
 
-        res.status(200).json(rows);
-    } catch (error) {
-        console.error("Erro ao buscar produtos:", error);
-        res.status(500).json({
-            mensagem: "Erro ao buscar produtos"
-        });
-    }
-});
+  const {email,senha} = req.body
+  try {
+    const [usuarios] = await db.query(
+      "SELECT * FROM usuario where email = ?",
+      [email]
+    )
 
-// Rota para cadastrar um produto
+    if(usuarios.length === 0){
+      return res.status(401).json({mensagem:"Email ou senha não encontrados"})
+    }
+
+    const usuario = usuarios[0]
+
+const senhaValida = await bcrypt.compare(
+    senha,
+    usuario.senha
+)
+
+if(!senhaValida){
+    return res.status(401).json({
+        mensagem:"Senha Invalida"
+    })
+}
+
+    
+      const token = jwt.sign({
+          id: usuario.id,
+          email: usuario.email
+        },
+        process.env.JWT_SECRET,
+        {
+          expiresIn:"1h"
+        }
+
+      )
+      res.json({
+    mensagem:"Login realizado",
+          token
+        })
+  
+
+  } catch (error) {
+    console.error(error)
+    res.status(500).json(
+      {
+    mensagem:"Erro no login"
+      }
+    )
+    
+    
+  }
+})
+
 app.post("/produto", async (req, res) => {
-    try {
-        const { descricao, categoria, preco, imagem } = req.body;
+  try {
+    const { descricao, categoria, preco, imagem } = req.body;
 
-        const sql = `
-            INSERT INTO produto (descricao, categoria, preco, imagem)
-            VALUES (?, ?, ?, ?)
-        `;
+    const sql = `
+      INSERT INTO produtos (descricao, categoria, preco, imagem)
+      VALUES (?, ?, ?, ?)
+    `;
 
-        const [result] = await db.execute(sql, [
-            descricao,
-            categoria,
-            preco,
-            imagem
-        ]);
+    const [result] = await db.execute(sql, [
+      descricao,
+      categoria,
+      preco,
+      imagem
+    ]);
 
-        res.status(201).json({
-            mensagem: "Produto cadastrado com sucesso",
-            produto: {
-                id: result.insertId,
-                descricao,
-                categoria,
-                preco,
-                imagem
-            }
-        });
+    res.status(201).json({
+      mensagem: "Produto cadastrado com sucesso",
+      produto: {
+        id: result.insertId,
+        descricao,
+        categoria,
+        preco,
+        imagem
+      }
+    });
 
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({
-            mensagem: "Erro ao cadastrar produto"
-        });
-    }
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      mensagem: "Erro ao cadastrar produto"
+    });
+  }
 });
 
-app.listen(PORT, () => {
-    console.log("Servidor rodando na porta 3001")
+app.get("/produto", auth, async (req,res) =>{
+  try {
+    const [produtos] = await db.query(
+      "SELECT * from produtos"
+    )
+
+    res.json(produtos)
+  } catch (error) {
+    console.log(error)
+  }
+})
+
+app.post("/register", async (req, res)=>{
+  try {
+    
+    const {nome,email, senha} = req.body
+
+    if(!nome || !email || !senha){
+      res.status(400).json({
+        mensagem:"Preencha todos os campos"
+      })
+    }
+
+    const [usuarioExistente] = await db.query(
+      "SELECT id FROM usuario WHERE email = ?",
+      [email]
+    )
+
+if(usuarioExistente.length > 0){
+    return res.status(400).json({
+        mensagem:"E-mail já cadastrado"
+    })
+}
+
+const senhaHash = await bcrypt.hash(senha,10)
+
+await db.query(
+    "INSERT INTO usuario(nome, email,senha)VALUE(?,?,?)",
+    [nome,email,senhaHash ]
+)
+  } catch (error) {
+    console.error(error)
+
+    res.status(500).json({
+      mensagem:"Erro interno do servidor"
+    })
+  }
+})
+
+app.listen(PORT, ()=>{
+  console.log("Servidor rodando na porta 3001")
 })
